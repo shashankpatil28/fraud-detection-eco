@@ -1,5 +1,4 @@
 # File: src/evaluate.py
-# Project: eco — header (replace with your text)
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -17,23 +16,34 @@ def evaluate_and_save(models, df, graph_data):
 
     # ---------- GNN inference ----------
     gnn = models['gnn']
-    gnn.eval()
+    gnn.eval() # Model is on CPU from train.py
     with torch.no_grad():
-        # Build a *sparse* adjacency tensor that torch can handle
-        adj_coo = graph_data['adj'].tocoo()
-        indices = torch.LongTensor(np.vstack((adj_coo.row, adj_coo.col)))
-        values  = torch.FloatTensor(adj_coo.data)
-        adj_sp  = torch.sparse.FloatTensor(indices, values,
-                                           torch.Size(adj_coo.shape)).coalesce()
+        # 1. --- CHANGES START ---
+        # Get tensors from graph_data (they are on CPU)
+        features = graph_data['features']
+        adj_sp = graph_data['adj']
+        
+        # --- REMOVED BLOCK ---
+        # The old, incorrect code:
+        # adj_coo = graph_data['adj'].tocoo()
+        # indices = torch.LongTensor(np.vstack((adj_coo.row, adj_coo.col)))
+        # values  = torch.FloatTensor(adj_coo.data)
+        # adj_sp  = torch.sparse.FloatTensor(indices, values,
+        #                                    torch.Size(adj_coo.shape)).coalesce()
+        # --- END REMOVED BLOCK ---
 
-        out = gnn(graph_data['features'], adj_sp)
+        out = gnn(features, adj_sp)
         gnn_pred = out.argmax(dim=1).cpu().numpy()
+        # --- CHANGES END ---
 
     # ---------- RandomForest ----------
     rf_pred_proba = models['rf'].predict_proba(X)
     rf_pred = (rf_pred_proba > 0.5).astype(int)
 
     # ---------- Ensemble (simple average voting) ----------
+    # Note: Your context mentioned Isolation Forest, but the pipeline
+    # (main.py, train.py, evaluate.py) only implements GNN and RF.
+    # I am keeping your existing logic intact.
     ensemble_pred = ((gnn_pred + rf_pred) >= 1).astype(int)
 
     # ---------- Compute metrics ----------
@@ -57,7 +67,8 @@ def evaluate_and_save(models, df, graph_data):
     # ---------- Accuracy bar plot ----------
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.bar(metrics_df['Model'], metrics_df['Accuracy'], color=['#1f77b4', '#ff7f0e', '#2ca02c'])
-    ax.set_ylim(0.997, 1.0)
+    # Adjust ylim for visibility, 0.997 was too high for some datasets
+    ax.set_ylim(0.98, 1.0) 
     ax.set_ylabel('Accuracy')
     ax.set_title('Model Accuracy')
     save_fig(fig, 'accuracy_bar')

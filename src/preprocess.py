@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import networkx as nx
 import torch
-from scipy.sparse import csr_matrix, hstack, vstack  # <-- import functions directly
+from scipy.sparse import csr_matrix, hstack, vstack  # <-- Imports are fine
 
 
 def create_graph(df: pd.DataFrame):
@@ -15,9 +15,19 @@ def create_graph(df: pd.DataFrame):
     """
     G = nx.Graph()
     df_sorted = df.sort_values('Time').reset_index(drop=True)
+    n_total = len(df)
 
     # --------------------------------------------------------------
-    # 1. Add edges (time < 1h and amount diff < $50)
+    # 1. --- CHANGE START ---
+    # Add ALL nodes to the graph first.
+    # This ensures that even isolated nodes (with no edges)
+    # are in G, which fixes the NetworkXError.
+    G.add_nodes_from(range(n_total))
+    # --- CHANGE END ---
+    # --------------------------------------------------------------
+
+    # --------------------------------------------------------------
+    # 2. Add edges (time < 1h and amount diff < $50)
     # --------------------------------------------------------------
     edges = []
     for i in range(len(df_sorted) - 1):
@@ -27,62 +37,36 @@ def create_graph(df: pd.DataFrame):
             edges.append((i, i + 1))
     G.add_edges_from(edges)
 
-    n_total = len(df)
 
     # --------------------------------------------------------------
-    # 2. If no edges → return zero matrix
+    # 3. If no edges → return zero matrix
+    #    (We still check len(G.edges()) because G will have nodes)
     # --------------------------------------------------------------
-    if len(G) == 0:
+    if len(G.edges()) == 0:
         adj_tensor = torch.sparse_coo_tensor(
             torch.empty((2, 0), dtype=torch.long),
             torch.empty((0,), dtype=torch.float32),
             size=(n_total, n_total)
-        ).coalesce()
+        ).cooalesce()
         return adj_tensor, df_sorted.index
 
     # --------------------------------------------------------------
-    # 3. Nodes that appear in the graph
-    # --------------------------------------------------------------
-    present_nodes = sorted(G.nodes)
-    n_sub = len(present_nodes)
-
-    # --------------------------------------------------------------
-    # 4. Build adjacency for present nodes only
+    # 4. Build the full (N, N) adjacency matrix directly.
+    #    This will now work because all nodes in the nodelist
+    #    are guaranteed to be in G.
     # --------------------------------------------------------------
     try:
-        adj_sub = nx.to_scipy_sparse_array(G, nodelist=present_nodes,
-                                          dtype=np.float32, format='csr')
+        adj_matrix = nx.to_scipy_sparse_array(G, nodelist=range(n_total),
+                                              dtype=np.float32, format='csr')
     except AttributeError:
-        adj_sub = nx.to_scipy_sparse_matrix(G, nodelist=present_nodes,
-                                            dtype=np.float32, format='csr')
+        # Fallback for older networkx versions
+        adj_matrix = nx.to_scipy_sparse_matrix(G, nodelist=range(n_total),
+                                                dtype=np.float32, format='csr')
 
     # --------------------------------------------------------------
-    # 5. Compute padding sizes
+    # 5. Convert to PyTorch sparse tensor
     # --------------------------------------------------------------
-    pad_before = present_nodes[0]
-    pad_after  = n_total - present_nodes[-1] - 1
-
-    # --------------------------------------------------------------
-    # 6. Create padding matrices (zero)
-    # --------------------------------------------------------------
-    row_pad_left  = csr_matrix((n_sub, pad_before), dtype=np.float32)
-    row_pad_right = csr_matrix((n_sub, pad_after),  dtype=np.float32)
-    col_pad       = csr_matrix((pad_after, n_total), dtype=np.float32)
-
-    # --------------------------------------------------------------
-    # 7. Stack horizontally: [pad_left | adj_sub | pad_right]
-    # --------------------------------------------------------------
-    adj_padded = hstack([row_pad_left, adj_sub, row_pad_right], format='csr')
-
-    # --------------------------------------------------------------
-    # 8. Stack vertically: add empty rows at bottom
-    # --------------------------------------------------------------
-    adj_padded = vstack([adj_padded, col_pad], format='csr')
-
-    # --------------------------------------------------------------
-    # 9. Convert to PyTorch sparse tensor
-    # --------------------------------------------------------------
-    coo = adj_padded.tocoo()
+    coo = adj_matrix.tocoo()
     indices = torch.from_numpy(np.vstack((coo.row, coo.col))).long()
     values  = torch.from_numpy(coo.data).float()
     adj_tensor = torch.sparse_coo_tensor(indices, values,

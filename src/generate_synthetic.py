@@ -1,5 +1,4 @@
 # File: src/generate_synthetic.py
-
 import torch
 import torch.nn as nn
 import numpy as np
@@ -32,8 +31,8 @@ class Critic(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-def gradient_penalty(critic, real, fake):
-    alpha = torch.rand(real.size(0), 1, device=real.device)
+def gradient_penalty(critic, real, fake, device):
+    alpha = torch.rand(real.size(0), 1).to(device)
     interpolates = alpha * real + (1 - alpha) * fake
     interpolates.requires_grad_(True)
     d_inter = critic(interpolates)
@@ -52,12 +51,22 @@ def generate_synthetic(df, save_path, n_samples=50000, epochs=1000):
         print("No fraud samples! Skipping.")
         return
 
-    features = fraud_df.drop(columns=['label']).values
-    features = (features - features.mean(axis=0)) / (features.std(axis=0) + 1e-8)
-    features = torch.FloatTensor(features)
+    # --- CHANGES START ---
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Generating synthetic data on {device}...")
+    # --- CHANGES END ---
 
-    G = Generator(100, features.shape[1]).cuda() if torch.cuda.is_available() else Generator(100, features.shape[1])
-    C = Critic(features.shape[1]).cuda() if torch.cuda.is_available() else Critic(features.shape[1])
+    features = fraud_df.drop(columns=['label']).values
+    # Normalize features for WGAN
+    feat_mean = features.mean(axis=0)
+    feat_std = features.std(axis=0) + 1e-8
+    features = (features - feat_mean) / feat_std
+    features = torch.FloatTensor(features).to(device)
+
+    # --- CHANGES START ---
+    G = Generator(100, features.shape[1]).to(device)
+    C = Critic(features.shape[1]).to(device)
+    # --- CHANGES END ---
 
     opt_g = torch.optim.Adam(G.parameters(), lr=1e-4, betas=(0.5, 0.9))
     opt_c = torch.optim.Adam(C.parameters(), lr=1e-4, betas=(0.5, 0.9))
@@ -65,23 +74,23 @@ def generate_synthetic(df, save_path, n_samples=50000, epochs=1000):
     for epoch in range(epochs):
         # Train Critic
         for _ in range(5):
-            noise = torch.randn(features.size(0), 100)
-            if torch.cuda.is_available():
-                noise = noise.cuda()
+            # --- CHANGES START ---
+            noise = torch.randn(features.size(0), 100).to(device)
             fake = G(noise)
-            real = features if not torch.cuda.is_available() else features.cuda()
+            real = features # real is already on device
             d_real = C(real).mean()
             d_fake = C(fake).mean()
-            gp = gradient_penalty(C, real, fake)
+            gp = gradient_penalty(C, real, fake, device)
+            # --- CHANGES END ---
             loss_c = d_fake - d_real + 10 * gp
             opt_c.zero_grad()
             loss_c.backward()
             opt_c.step()
 
         # Train Generator
-        noise = torch.randn(features.size(0), 100)
-        if torch.cuda.is_available():
-            noise = noise.cuda()
+        # --- CHANGES START ---
+        noise = torch.randn(features.size(0), 100).to(device)
+        # --- CHANGES END ---
         fake = G(noise)
         loss_g = -C(fake).mean()
         opt_g.zero_grad()
@@ -93,11 +102,14 @@ def generate_synthetic(df, save_path, n_samples=50000, epochs=1000):
 
     # Generate
     with torch.no_grad():
-        noise = torch.randn(n_samples, 100)
-        if torch.cuda.is_available():
-            noise = noise.cuda()
+        # --- CHANGES START ---
+        noise = torch.randn(n_samples, 100).to(device)
         synth = G(noise).cpu().numpy()
-        synth = synth * fraud_df.drop(columns=['label']).std().values + fraud_df.drop(columns=['label']).mean().values
+        # --- CHANGES END ---
+        
+        # De-normalize
+        synth = synth * feat_std + feat_mean
+        
         synth_df = pd.DataFrame(synth, columns=fraud_df.drop(columns=['label']).columns)
         synth_df['label'] = 1
         synth_df.to_csv(save_path, index=False)
