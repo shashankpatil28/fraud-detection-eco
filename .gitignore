@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.pyc
+*.pyd
+*.pyo
+*.egg-info/
+.Python
+build/
+dist/
+venv/
+.venv/
+env/
+.env/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+*.ipynb
+
+# IDE-specific files (e.g., VS Code, PyCharm)
+.vscode/
+.idea/
+*.iml
+
+*.zip
+# Data and Models
+data/
+models/
+*.pkl
+*.h5
+*.onnx
+*.tf
+*.pth
+*.pt
+*.csv
+*.tsv
+*.json
+*.parquet
+*.feather
+*.hdf5
+*.npy
+*.npz
+
+# Logs
+logs/
+*.log
+
+# Environment variables
+.env
+.flaskenv
+
+# Other common files
+.DS_Store
+Thumbs.db
